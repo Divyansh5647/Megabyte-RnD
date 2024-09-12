@@ -254,7 +254,9 @@ class MEGABYTE(nn.Module):
 
         self.transformers = nn.ModuleList([])
         self.to_next_transformer_projections = nn.ModuleList([])
-
+        # 768 --- 512 ---- 6 ---- 4
+        # 
+        # 
         for h_dim, next_h_dim, stage_depth, next_seq_len in zip_longest(dim, dim[1:], depth, max_seq_len[1:]):
             self.transformers.append(Transformer(
                 dim = h_dim,
@@ -317,7 +319,7 @@ class MEGABYTE(nn.Module):
 
         return self.to_logits(tokens)
 
-    def forward(self, ids, return_loss = False):
+    def forward(self, ids, return_loss = False, return_bpb = False):
         batch = ids.shape[0]
 
         assert ids.ndim in {2, self.stages + 1}
@@ -357,6 +359,7 @@ class MEGABYTE(nn.Module):
             if exists(pos_emb):
                 positions = pos_emb(torch.arange(tokens.shape[-2], device = device))
                 tokens = tokens + positions
+        
 
             tokens_at_stages.insert(0, tokens)
 
@@ -368,11 +371,15 @@ class MEGABYTE(nn.Module):
         # the un-pixelshuffled representations of the previous hierarchy, starts with None
 
         prev_stage_tokens_repr = None
-
+        # print(f'IDS DTYPE = {ids.dtype}')   # debug
         # spatial tokens is tokens with depth pos reduced along depth dimension + spatial positions        
-
+        # kurtz = 1
         for stage_start_tokens, stage_tokens, transformer, proj in zip(self.start_tokens, tokens_at_stages, self.transformers, self.to_next_transformer_projections):
+            # print(f'******** ***** **** KURTZ : {kurtz}')    #debug
+            # kurtz+=1
+            # print(stage_tokens.shape)
             stage_tokens, ps = pack_one(stage_tokens, '* n d')
+            # print(stage_tokens.shape)
             stage_start_tokens = repeat(stage_start_tokens, 'f -> b 1 f', b = stage_tokens.shape[0])
 
             # concat start token
@@ -413,16 +420,34 @@ class MEGABYTE(nn.Module):
 
             return logits
 
+
         logits = rearrange(logits, 'b ... c -> b (...) c')
         logits = torch.cat((start_tokens, logits), dim = -2)
 
         preds = rearrange(logits, 'b n c -> b c n')
         labels = rearrange(ids, 'b ... -> b (...)')
-
         loss = F.cross_entropy(
             preds[..., :-1],
             labels,
             ignore_index = self.pad_id
         )
-
+        if return_bpb:
+            return loss, self.calculate_bpb(loss, ids)
         return loss
+    def calculate_bpb(self, loss, ids):
+        """
+        Calculate bits-per-byte (BPB) for the given loss and input IDs.
+
+        Args:
+            loss (torch.Tensor): The cross-entropy loss value.
+            ids (torch.Tensor): The input token IDs.
+        
+        Returns:
+            bpb (float): The bits-per-byte metric.
+        """
+        Ntokens = ids.numel()  
+        Nbytes = ids.element_size() * Ntokens 
+        print(f'NBYTES : {ids.element_size()}')
+        # bpb = loss.item() * (Ntokens / Nbytes) / torch.log(torch.tensor(2.0)) 
+        bpb = loss.item() * (Ntokens / Nbytes) 
+        return bpb

@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, Dataset
 # constants
 
 NUM_BATCHES = int(1e5)
-BATCH_SIZE = 4
+BATCH_SIZE = 8
 GRADIENT_ACCUMULATE_EVERY = 4
 LEARNING_RATE = 2e-4
 VALIDATE_EVERY  = 100
@@ -82,7 +82,7 @@ for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
         loss = model(next(train_loader), return_loss = True)
         loss.backward()
 
-    print(f'training loss: {loss.item()}')
+    print(f'{i} : training loss: {loss.item()}')
     torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
     optim.step()
     optim.zero_grad()
@@ -90,18 +90,18 @@ for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
     if i % VALIDATE_EVERY == 0:
         model.eval()
         with torch.no_grad():
-            loss = model(next(val_loader), return_loss = True)
-            print(f'validation loss: {loss.item()}')
+            loss, bpb = model(next(val_loader), return_loss = True, return_bpb=True)
+            print(f'{i} : validation loss: {loss}, bpb : {bpb}')
 
     if i != 0 and i % GENERATE_EVERY == 0:
         model.eval()
         inp = random.choice(val_dataset)[:-1]
         prime_inp = inp[:PRIME_LEN]
         prime = decode_tokens(prime_inp)
-        print(f'%s \n\n %s', (prime, '*' * 100))
+        print('Epoch : %d \n\n%s \n\n%s' % (i, prime, '*' * 100))
 
         sample = model.generate(prime_inp[None, :])
         sample = sample.flatten(1)
 
         output_str = decode_tokens(sample[0][PRIME_LEN:])
-        print(output_str)
+        print(f'{i} : {output_str}')
